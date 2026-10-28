@@ -8,11 +8,13 @@
 
 int main(){
     /* 指定 V4L2 视频设备节点路径（主通道） */
-    const char *dev_name = "/dev/video0";
+    const char *dev_name = "/dev/video10";
 
+    /* ================= 1.以阻塞，可读可写模式打开视频设备 ================= */
+    
     /* 文件描述符初始化，-1 表示无效状态 */
     int fd = -1;
-
+    
     /*以阻塞，可读可写模式打开视频设备*/
     fd = open(dev_name,O_RDWR);
 
@@ -24,7 +26,40 @@ int main(){
         /* 输出设备打开成功信息及分配的文件描述符 */
         printf("Device opened successfully: %s,fd = %d\n",dev_name,fd);
     }
+    /* ================= 2. 设置视频格式 ================= */
 
+     /* 实例化 V4L2 格式结构体，并初始化为 0 清除脏数据 */
+    struct v4l2_format fmt;
+    memset(&fmt,0,sizeof(fmt));
+
+    /* 指定数据流类型为视频捕获(Capture) */
+    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+    /*设置目标分辨率*/
+    fmt.fmt.pix.width = 640;
+    fmt.fmt.pix.height = 480;
+
+    /*设置像素格式:YUYV*/
+    fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
+
+    /*设置场模式:V4L2_FIFELD_NONE*/
+    fmt.fmt.pix.field = V4L2_FIELD_NONE;
+
+    /*通过ioctl发送VIDIOC_S_FMT指令,将配置发送给驱动程序*/
+    if(ioctl(fd,VIDIOC_S_FMT,&fmt) == -1){
+        /* 若配置失败，打印底层错误并释放资源退出 */
+        printf("Failed to set video format\n");
+        close(fd);
+        return EXIT_FAILURE;
+    }
+
+    /* 打印驱动实际接受的格式（硬件可能不支持你所求，会自动降级调整） */
+    printf("Format set successfully: %d x %d, pixelformat: %c%c%c%c\n",
+           fmt.fmt.pix.width, fmt.fmt.pix.height,
+           (fmt.fmt.pix.pixelformat) & 0xFF,
+           (fmt.fmt.pix.pixelformat >> 8) & 0xFF,
+           (fmt.fmt.pix.pixelformat >> 16) & 0xFF,
+           (fmt.fmt.pix.pixelformat >> 24) & 0xFF);
     /* 释放文件描述符，关闭设备 */
     close(fd);
     return EXIT_SUCCESS;
