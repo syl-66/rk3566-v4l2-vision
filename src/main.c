@@ -87,6 +87,7 @@ int main(){
         printf("3. Buffers requested successfully: %d buffers allocated\n", req.count);
     }
 
+    /*================= 阶段四 mmap地址映射 ================= */
     /*定义结构体：记录映射后的起始地址和内存大小*/
     struct buffer{
         void *start;    /*映射到用户空间的虚拟地址起始指针*/
@@ -134,6 +135,79 @@ int main(){
     
     /* 打印映射成功信息 */
     printf("4. mmap successfully mapped %d buffers\n", req.count);
+
+    /* ================= 第五阶段：入队、开启流、出队 ================= */
+    /*将所有空缓冲区放入内核的待填充队列*/
+    for (int i = 0; i < req.count; i++)
+    {
+        struct v4l2_buffer buf;
+        memset(&buf,0,sizeof(buf));
+
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory = V4L2_MEMORY_MMAP;
+        buf.index = i;
+
+        /*发送QBUF指令，把缓冲区交还给内核*/
+        if(ioctl(fd,VIDIOC_QBUF,&buf) == -1){
+            perror("Failed to queue buffer");
+            return EXIT_FAILURE;
+        }
+    }
+    printf("5.1 All %d buffers queued successfully\n", req.count);
+
+    /*2.开启视频流*/
+    enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    /*发送STREAMON指令，启动硬件采集*/
+    if(ioctl(fd,VIDIOC_STREAMON,&type) == -1){
+        perror("Failed to start stream");
+        return EXIT_FAILURE;
+    }
+    printf("5.2 Video stream started successfully\n");
+
+    /*出队获取一帧画面*/
+    struct v4l2_buffer buf;
+    memset(&buf,0,sizeof(buf));
+
+    /* 极其关键：出队前必须指定类型和内存模式 */
+    buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    buf.memory = V4L2_MEMORY_MMAP;
+
+    /*
+    //给硬件一点点时间准备第一帧画面 
+    printf("Waiting for the first frame...\n");
+    sleep(0.5); 
+    */
+   
+    if(ioctl(fd,VIDIOC_DQBUF,&buf) == -1){
+        perror("Failed to dequeue stream");
+        return EXIT_FAILURE;
+    }
+    /* 打印取到的信息 */
+    printf("5.3 Frame captured! Buffer index: %d, bytes used: %d\n",
+         buf.index, buf.bytesused);
+    
+    /* ================= 第六阶段：保存图像数据到文件 ================= */
+    /*以二进制写模式("wb")打开文件*/
+    FILE *fp = fopen("frame.yuv","wb");
+    if(fp == NULL){
+        perror("Failed to open file for writing");
+        return EXIT_FAILURE;
+    }
+    /* 将映射到用户空间的内存数据写入文件 */
+    /* buffers[buf.index].start 就是刚才取出的那一帧数据的首地址 */
+    /* buf.bytesused 是这一帧实际占用的字节数 */
+    size_t written = fwrite(buffer[buf.index].start,1,buf.bytesused,fp);
+    
+    if(written != buf.bytesused){
+        perror("Failed to write complete frame");
+        fclose(fp);
+        return EXIT_FAILURE;
+    }
+    
+    /* 关闭文件 */
+    fclose(fp);
+    printf("6. Frame saved to frame.yuv successfully (Size: %d bytes)\n", 
+                                                      buf.bytesused);
 
     /* 释放文件描述符，关闭设备 */
     close(fd);
