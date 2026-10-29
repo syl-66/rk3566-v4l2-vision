@@ -209,6 +209,27 @@ int main(){
     printf("6. Frame saved to frame.yuv successfully (Size: %d bytes)\n", 
                                                       buf.bytesused);
 
+    /* ================= 第七阶段：清理与释放资源 ================= */                                                
+        /* 1. 停止视频流（告诉硬件：别拍了） */
+    if (ioctl(fd, VIDIOC_STREAMOFF, &type) == -1) {
+        perror("Failed to stop stream");
+        return EXIT_FAILURE;
+    }else{
+
+    /* 2. 解除内存映射（把 mmap 开的玻璃窗封上） */
+    for (int i = 0; i < req.count; ++i) {
+        munmap(buffer[i].start, buffer[i].length);
+    }
+
+    /* 3. 释放你 calloc 分配的记账本 */
+    free(buffer);
+
+    /* 4. 最后，关闭设备大门 */
+    close(fd);
+
+    printf("7. Cleanup finished. All resources released.\n");
+    return EXIT_SUCCESS;
+    }
     /* 释放文件描述符，关闭设备 */
     close(fd);
     return EXIT_SUCCESS;
