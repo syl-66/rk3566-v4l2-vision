@@ -5,6 +5,7 @@
 #include <string.h>     // 字符串操作，为了用 memset 清空结构体
 #include <sys/ioctl.h>  // 底层设备控制，为了用 ioctl 发送指令
 #include <linux/videodev2.h> // V4L2 的核心大字典，包含了所有摄像头的结构体和宏
+#include <sys/mman.h>   //使用mmap函数
 
 int main(){
     /* 指定 V4L2 视频设备节点路径（主通道） */
@@ -20,7 +21,7 @@ int main(){
 
     /*错误处理检查open是否调用成功*/
     if(fd == -1){
-        printf("Failed to open video device");
+        perror("Failed to open video device");
         return EXIT_FAILURE;
     }else{
         /* 输出设备打开成功信息及分配的文件描述符 */
@@ -48,7 +49,7 @@ int main(){
     /*通过ioctl发送VIDIOC_S_FMT指令,将配置发送给驱动程序*/
     if(ioctl(fd,VIDIOC_S_FMT,&fmt) == -1){
         /* 若配置失败，打印底层错误并释放资源退出 */
-        printf("Failed to set video format\n");
+        perror("Failed to set video format\n");
         close(fd);
         return EXIT_FAILURE;
     }
@@ -85,6 +86,54 @@ int main(){
         /* 打印内核实际分配的缓冲区数量 */
         printf("3. Buffers requested successfully: %d buffers allocated\n", req.count);
     }
+
+    /*定义结构体：记录映射后的起始地址和内存大小*/
+    struct buffer{
+        void *start;    /*映射到用户空间的虚拟地址起始指针*/
+        size_t length;  /*缓冲区的字节大小*/
+    };
+
+    /*动态分配内存用来装4个结构体，calloc会自动把内存初始化为0*/
+    struct buffer *buffer = calloc(req.count,sizeof(*buffer));
+
+    /*遍历这4个缓冲区，向内核查询具体的信息并映射*/
+    for (int i = 0; i < req.count; i++)
+    {
+        /*实例化v4l2缓冲区结构体，用于向内核查询信息*/
+        struct v4l2_buffer buf;
+        memset(&buf,0,sizeof(buf));
+
+        /*告诉内核，我们要查询第i个缓冲区*/
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;;
+        buf.memory =  V4L2_MEMORY_MMAP;
+        buf.index = i;
+
+        /* 发送 QUERYBUF 指令，获取缓冲区的长度和在物理内存中的偏移量 */
+        if(ioctl(fd,VIDIOC_QUERYBUF,&buf) == -1){
+            perror("Failed to query buffer");
+            return EXIT_FAILURE;
+        }else{
+            /* 记录缓冲区的长度 */
+            buffer[i].length = buf.length;
+
+            /* 核心操作：使用 mmap 将内核物理内存映射到用户空间 */
+            /* 
+            * 使用 mmap 将内核物理内存映射到用户空间
+            * 参数 1 (NULL)：映射的起始地址。传 NULL 表示让内核自动在用户空间找一块空闲地址。
+            * 参数 2 (buf.length)：要映射的内存长度（字节数），由前面的 QUERYBUF 查询得到。
+            * 参数 3 (PROT_READ | PROT_WRITE)：内存保护权限。表示映射后的内存既可读也可写。
+            * 参数 4 (MAP_SHARED)：映射标志。表示与内核共享这块映射，对该内存的修改会反映给内核（也就是硬件）。
+            * 参数 5 (fd)：文件描述符。表示要映射的是哪个设备节点。
+            * 参数 6 (buf.m.offset)：被映射内存的偏移量。由 QUERYBUF 得到，告诉内核从物理内存的哪里开始映射。
+            */
+            buffer[i].start = mmap(NULL,buf.length,PROT_READ | PROT_WRITE,
+                                MAP_SHARED,fd,buf.m.offset
+            );
+        }
+    }
+    
+    /* 打印映射成功信息 */
+    printf("4. mmap successfully mapped %d buffers\n", req.count);
 
     /* 释放文件描述符，关闭设备 */
     close(fd);
