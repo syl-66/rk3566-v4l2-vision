@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "v4l2_camera.h"
+#include "rknn_engine.h"
 
 int main() {
     const char *dev_name = "/dev/video10";
@@ -8,44 +10,50 @@ int main() {
     struct buffer *buffers = NULL;
     int buffer_count = 0;
 
-    /* 1. 初始化 */
+    /* 1. 初始化摄像头 */
     if (camera_init(dev_name, &fd, &buffers, &buffer_count) != 0) {
-        printf("初始化失败，程序退出\n");
-        return EXIT_FAILURE;
+        return -1;
     }
 
-    /* 2. 启动视频流 */
-    if (camera_start(fd,buffer_count) != 0) {
-        printf("启动失败，程序退出\n");
-        return EXIT_FAILURE;
+    /* 2. 启动摄像头 */
+    if (camera_start(fd, buffer_count) != 0) {
+        return -1;
     }
 
-
-    /* 3. 连续抓取 10 帧画面，保存到文件 */
-    printf("=== Starting to capture frames ===\n");
+    printf("=== 开始测试图像预处理转换 ===\n");
     
-    for (int i = 0; i < 10; i++) {
-        void *frame_data = NULL;
-        size_t frame_size = 0;
+    void *yuyv_data = NULL;
+    size_t frame_size = 0;
 
-        /* 从底层拿一帧（阻塞等待） */
-        if (camera_get_frame(fd, buffers, &frame_data, &frame_size) == 0) {
-            
-            /* 把这一帧存为文件 */
-            char filename[32];
-            sprintf(filename, "frame_%d.yuv", i);
-            
-            FILE *fp = fopen(filename, "wb");
-            if (fp) {
-                fwrite(frame_data, 1, frame_size, fp);
-                fclose(fp);
-                printf("Saved: %s (Size: %zu bytes)\n", filename, frame_size);
-            }
+    /* 3. 抓取一帧画面 */
+    if (camera_get_frame(fd, buffers, &yuyv_data, &frame_size) == 0) {
+        printf("成功抓到 YUYV 帧，大小: %zu 字节\n", frame_size);
+
+        /* 4. 申请一块 640x640x3 的 RGB 内存 */
+        unsigned char *rgb_data = (unsigned char *)malloc(640 * 640 * 3);
+        if (rgb_data == NULL) {
+            printf("RGB 内存分配失败\n");
+            return -1;
         }
+
+        /* 5. 调用你手搓的转换函数 */
+        convert_yuyv_to_rgb((unsigned char *)yuyv_data, 640, 480, rgb_data);
+        printf("图像转换完成，准备保存文件...\n");
+
+        /* 6. 把转换后的 RGB 数据存到文件里 */
+        FILE *fp = fopen("test_rgb.rgb", "wb");
+        if (fp) {
+            fwrite(rgb_data, 1, 640 * 640 * 3, fp);
+            fclose(fp);
+            printf("成功保存到 test_rgb.rgb (大小: %d 字节)\n", 640 * 640 * 3);
+        }
+        
+        free(rgb_data);
     }
 
-    /* 4. 停止视频流，清理所有资源 */
+    /* 7. 清理资源 */
     camera_stop_and_cleanup(fd, buffers, buffer_count);
+    printf("=== 测试结束 ===\n");
 
-    return EXIT_SUCCESS;
+    return 0;
 }
