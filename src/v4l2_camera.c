@@ -9,6 +9,69 @@
 
 #include "v4l2_camera.h"
 
+/*自己的的理解
+camera_init
+第一步
+open -> 为了是获取到fd，通过fd来标识自己要控制的硬件是哪一个
+
+第二步
+设置视频的格式 fmt
+
+第三步
+通过ioctl(fd, VIDIOC_S_FMT, &fmt);来告诉硬件输出什么格式的视频数据
+
+第四步
+申请四个缓冲区，用来存储camera的数据，这四个缓冲区都是创建在内核里面的，用户直接操作不了
+
+第五步
+创建一个local_buffer，里面存了 mmap映射后的虚拟地址，和缓冲区大小，缓冲区大小是解除映射的必要参数
+
+第六步
+创建一个buf,因为用户不能直接操作访问内核的缓冲区，所以通过buf来告诉内核用户要操作哪一个缓冲区,用index来标识
+
+第七步
+把每一个内核缓冲区的地址通过mmap映射的虚拟地址存到local_buffer.start里，缓冲区大小存到loacl_buffer.length里
+
+camera_start
+第一步
+创建一个buf来告诉内核，用户要操作哪一个缓冲区
+
+第二步
+然后通过ioctl(fd, VIDIOC_QBUF, &buf)，把buf.index个缓冲区使用权还给内核
+
+第三步
+通过enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;设置camera的工作模式
+
+第四步
+通过ioctl(fd, VIDIOC_STREAMON, &type)；告诉camera硬件用type的工作模式开始工作采集数据
+
+camera_get_frame
+第一步
+创建一个buf来告诉内核，camera类型和内存模式，因为获取缓冲区的数据是阻塞式的，只要有缓冲区满了就拿走
+
+第二步
+通过ioctl(fd, VIDIOC_DQBUF, &buf)，去缓冲区里拿一帧数据
+
+第三步
+把一帧数据存到*data里，data是函数参数，main函数可以创建参数，来传递到函数里
+*data = buffers[buf.index].start;
+*size = buf.bytesused;
+
+第四步
+通过ioctl(fd, VIDIOC_QBUF, &buf)把用完的缓存区再给内核，
+
+camera_stop_and_cleanup
+第一步
+通过ioctl(fd, VIDIOC_STREAMOFF, &type)，停止camera采集数据
+
+第二步
+munmap解除映射，因为是用户解除映射，操作在用户态，不需要通过index来操作内核缓冲区，直接操作虚拟地址就行
+
+第三步
+free(buffers)；
+close(fd)；
+*/
+
 /**
  * @brief 初始化 V4L2 摄像头设备
  * 
@@ -41,7 +104,6 @@ int camera_init(const char *dev_name,int *fd_out,struct buffer **buffers,int *bu
     /*2.设置视频格式*/
     struct v4l2_format fmt;
     memset(&fmt,0,sizeof(fmt));
-
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     fmt.fmt.pix.width = 640;
     fmt.fmt.pix.height = 480;
@@ -277,3 +339,4 @@ void camera_stop_and_cleanup(int fd, struct buffer *buffers, int buffer_count) {
     
     printf("7. Cleanup finished. All resources released.\n");
 }
+
