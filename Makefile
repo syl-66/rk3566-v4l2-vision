@@ -3,7 +3,7 @@ CC = /home/shiyangling/Desktop/linux-kernel-6.1/rk-linux6.1-2026060914/prebuilts
 CFLAGS = -Wall -g -I./inc -I/home/shiyangling/Desktop/linux-kernel-6.1/rk-linux6.1-2026060914/external/rknpu2/runtime/Linux/librknn_api/include
 
 # 2. 链接选项：告诉链接器要链哪些库
-LDFLAGS = -lpthread -L/home/shiyangling/Desktop/linux-kernel-6.1/rk-linux6.1-2026060914/external/rknpu2/runtime/Linux/librknn_api/aarch64 -lrknnrt
+LDFLAGS = -lpthread -L/home/shiyangling/Desktop/linux-kernel-6.1/rk-linux6.1-2026060914/external/rknpu2/runtime/Linux/librknn_api/aarch64 -lrknnrt -lm
 
 SRCS = $(wildcard src/*.c)
 OBJS = $(SRCS:.c=.o)

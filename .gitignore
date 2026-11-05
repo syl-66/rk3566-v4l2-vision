@@ -1,2 +1,3 @@
 *.o
 rk3566_app
+rknn_env/
