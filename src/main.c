@@ -2,10 +2,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <time.h>    /* 引入时间库，用于防抖计时 */
+#include <time.h>    /* 引入时间库，用于防抖和音频冷却计时 */
 
 #include "v4l2_camera.h"
 #include "rknn_engine.h"
+#include "speech.h"  /* 引入语音播报模块 */
 
 /* 
  * 声明外部变量。
@@ -18,7 +19,7 @@ int main(int argc, char *argv[]) {
     
     /* 硬件设备路径及模型路径配置 */
     const char *dev_name = "/dev/video10";
-    const char *model_path = "/root/rk3566_vision/yolov8.rknn";
+    const char *model_path = "/root/rk3566_vision/yolov8.rknn"; 
     
     int fd = -1;
     struct buffer *buffers = NULL;
@@ -60,9 +61,11 @@ int main(int argc, char *argv[]) {
     DetectResult my_results[10]; 
 
     /* 
-     * 用于防抖的时间记录数组。
-     * 记录 80 个类别的最后一次播报时间，防止 AI 每帧都重复播报同一个东西。
+     * 核心防抖变量：
+     * 1. last_audio_time: 全局音频冷却计时器，保证 1.5 秒内只响一次，防止声卡打架。
+     * 2. last_report_time: 记录 80 个类别的最后播报时间，同一个物体 5 秒内不重复播报。
      */
+    time_t last_audio_time = 0; 
     time_t last_report_time[80] = {0}; 
 
     printf("=== 系统初始化完毕，开始实时导航识别 ===\n");
@@ -85,35 +88,65 @@ int main(int argc, char *argv[]) {
             /* 获取当前系统时间（秒级） */
             time_t now = time(NULL);
 
-            /* 2.4 业务逻辑：遍历检测结果，判断方位并播报 */
+            /* 
+             * 2.4 【音频防冲突机制】
+             * 如果距离上一次发声不足 1.5 秒，说明声卡还在播报。
+             * 我们直接跳过这一帧，等下一帧再处理，防止声音被截断。
+             */
+            if (now - last_audio_time < 1.5) {
+                printf("."); 
+                fflush(stdout);
+                continue; 
+            }
+
+            /* 2.5 业务逻辑：排队播报 */
             if (found_count > 0) {
+                int has_spoken = 0; /* 标记这一帧是否已经发过声了 */
+
                 for (int i = 0; i < found_count; i++) {
-                    
-                    /* 获取目标的 X 坐标（归一化 0.0 ~ 1.0）、类别 ID 和置信度 */
                     float x = my_results[i].x;
                     int class_id = my_results[i].class_id;
                     float conf = my_results[i].confidence;
                     
                     /* 
-                     * 【防抖核心逻辑】
-                     * 如果这个类别的物体在 3 秒内已经播报过，就直接跳过，
-                     * 避免视障人士的耳朵被重复的信息轰炸。
+                     * 【单物体防抖】
+                     * 同一个类别的物体（比如你一直拿着杯子），5 秒内不重复播报。
                      */
-                    if (now - last_report_time[class_id] < 3) {
+                    if (now - last_report_time[class_id] < 5) {
                         continue;
                     }
                     
-                    /* 更新该物体的最后播报时间 */
-                    last_report_time[class_id] = now;
+                    /* 
+                     * 【单帧限流】
+                     * 如果这一帧已经挑中了一个物体播报，剩下的即使满足条件也不报了。
+                     * 留到下一帧（1.5秒后）再排着队播，这样听觉才不会乱。
+                     */
+                    if (has_spoken) {
+                        continue;
+                    }
 
-                    /* 根据 X 坐标判断物体在左、中、右哪个方位 */
+                    /* 更新计时器 */
+                    last_report_time[class_id] = now;
+                    last_audio_time = now; 
+                    has_spoken = 1; /* 标记本帧已播报 */
+
+                    /* 判断方位并触发语音播报 */
                     if (x < 0.33) {
                         printf("🚨 左前方有 %s (置信度: %.2f)\n", coco_classes[class_id], conf);
+                        speech_report("Left", coco_classes[class_id]);
                     } else if (x > 0.66) {
                         printf("🚨 右前方有 %s (置信度: %.2f)\n", coco_classes[class_id], conf);
+                        speech_report("Right", coco_classes[class_id]);
                     } else {
                         printf("🚨 正前方有 %s (置信度: %.2f)\n", coco_classes[class_id], conf);
+                        speech_report("Front", coco_classes[class_id]);
                     }
+                }
+                
+                /* 如果检测到了东西，但因为冷却时间或防抖没播报，就打点 */
+                if (!has_spoken) {
+                    printf("."); 
+                    fflush(stdout);
                 }
             } else {
                 /* 当前帧没有检测到物体，打印一个点表示系统存活 */
